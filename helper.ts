@@ -5,8 +5,13 @@ import { join } from "node:path";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import type { M3UPlaylist, Stream, MediaSegment } from "./interface";
+let refreshTime: Date;
+let playlistUrl: string;
+
 
 export async function getDownloadURL(id: string): Promise<string> {
+  console.log("Getting download URL");
+  console.log("ID:", id);
   const { url, session, sticherURL } = await getMasterPlaylist(id);
   const MasterManifest = await axios.get(url);
   const highestBandwidthStream = getHighestBandwidthStream(parseMaster(MasterManifest.data).streams);
@@ -18,6 +23,8 @@ async function getMasterPlaylist(id: string) {
   const response = await axios.get(
     `https://boot.pluto.tv/v4/start?appName=web&appVersion=9.3.0-69146e96681a70e0e5f4f40942d0abc67f04864a&deviceVersion=129.0.0&deviceModel=web&deviceMake=firefox&deviceType=web&clientID=${uuid}&clientModelNumber=1.0.0`
   );
+  refreshTime = new Date();
+  refreshTime.setSeconds(refreshTime.getSeconds() + response.data.refreshInSec - 1);
   return {
     url: `${response.data.servers.stitcher}/v2/stitch/hls/channel/${id}/master.m3u8?${response.data.stitcherParams}&jwt=${response.data.sessionToken}`,
     session: response.data.sessionToken,
@@ -158,10 +165,15 @@ export async function getFiles(directoryPath: string, NamePrefix: string = "", f
 
 /**
  * Downloads and decrypts a playlist.
+ * @param channelID - The channel ID.
  * @param playlistUrl - The URL of the playlist.
  * @param outputFile - The output file path.
  */
-async function downloadPlaylist(playlistUrl: string, outputFile: string): Promise<void> {
+async function downloadPlaylist(channelID: string, outputFile: string): Promise<void> {
+  if(refreshTime < new Date() || !playlistUrl) {
+    console.log("Refreshing session token or no playlist URL");
+    playlistUrl = await getDownloadURL(channelID);
+  }
   try {
     const response = await axios.get<string>(playlistUrl);
     const playlistContent = response.data;
@@ -181,14 +193,14 @@ async function downloadPlaylist(playlistUrl: string, outputFile: string): Promis
 
 /**
  * Starts the downloader with a specified interval.
- * @param playlistUrl - The URL of the playlist.
+ * @param channelID - The channel ID.
  * @param outputPrefix - The output Prefix of the file.
  * @param interval - The interval in seconds.
  */
-export function startDownloader(playlistUrl: string, outputPrefix: string, interval: number) {
-  downloadPlaylist(playlistUrl, `${outputPrefix}${getUnixTimestamp()}.m3u8`);
+export async function startDownloader(channelID: string, outputPrefix: string, interval: number) {
+  downloadPlaylist(channelID, `${outputPrefix}${getUnixTimestamp()}.m3u8`);
   setInterval(() => {
-    downloadPlaylist(playlistUrl, `${outputPrefix}${getUnixTimestamp()}.m3u8`);
+    downloadPlaylist(channelID, `${outputPrefix}${getUnixTimestamp()}.m3u8`);
   }, interval * 1000);
 };
 
